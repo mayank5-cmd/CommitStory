@@ -1,0 +1,37 @@
+{
+  "name": "commitstory",
+  "version": "1.0.0",
+  "description": "Transform Git diffs and PRs into visual architecture maps (Mermaid.js) and stakeholder release notes with Gemini Flash",
+  "type": "module",
+  "main": "server.js",
+  "bin": {
+    "commitstory": "./bin/index.js"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "cli": "node bin/index.js --help"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "git",
+    "mermaid",
+    "gemini",
+    "changelog",
+    "architecture",
+    "cli",
+    "github-actions"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@google/genai": "^2.22.0",
+    "@octokit/rest": "^22.0.0",
+    "commander": "^15.0.0",
+    "cors": "^2.8.5",
+    "dotenv": "^17.4.2",
+    "express": "^5.1.0"
+  }
+}

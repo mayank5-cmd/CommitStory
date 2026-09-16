@@ -1,0 +1,214 @@
+name: CommitStory — Visual Changelog
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  commitstory:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout with full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install CommitStory AI dependency
+        run: npm install @google/genai
+
+      - name: Generate visual changelog and comment on PR
+        uses: actions/github-script@v7
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          # Optional repo/org Variables to tune diff limits (0 = unlimited).
+          MAX_DIFF_FILES: ${{ vars.MAX_DIFF_FILES }}
+          MAX_DIFF_LINES_PER_FILE: ${{ vars.MAX_DIFF_LINES_PER_FILE }}
+          MAX_DIFF_CHARS: ${{ vars.MAX_DIFF_CHARS }}
+        with:
+          script: |
+            const { execFileSync } = require('node:child_process');
+            const { writeFileSync } = require('node:fs');
+
+            const MARKER = '<!-- commitstory -->';
+            // gemini-1.5-flash was retired by Google (404 on v1beta).
+            const MODEL = 'gemini-3.5-flash';
+            const FALLBACK_MODEL = 'gemini-2.5-flash';
+
+            const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+            const isNotFound = (e) => /NOT_FOUND|not found|not supported|404/i.test(String(e?.message ?? e));
+            const isRetryable = (e) => {
+              if (typeof e?.status === 'number' && [408, 429, 500, 502, 503, 504].includes(e.status)) return true;
+              return /UNAVAILABLE|RESOURCE_EXHAUSTED|overloaded|high demand|try again later|timed? ?out|ECONNRESET|ETIMEDOUT|fetch failed|socket hang up|429|500|502|503|504/i.test(String(e?.message ?? e));
+            };
+            async function withRetries(fn, maxAttempts = 3, baseDelayMs = 1500) {
+              let lastErr;
+              for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+                try {
+                  return await fn();
+                } catch (e) {
+                  lastErr = e;
+                  if (!isRetryable(e) || attempt === maxAttempts) throw e;
+                  const delay = baseDelayMs * 2 ** (attempt - 1) + Math.floor(Math.random() * 500);
+                  core.info(`Gemini overloaded. Retry ${attempt}/${maxAttempts} in ${delay}ms...`);
+                  await sleep(delay);
+                }
+              }
+              throw lastErr;
+            }
+            // Diff limits: optional repo/org Variables MAX_DIFF_FILES,
+            // MAX_DIFF_LINES_PER_FILE, MAX_DIFF_CHARS. 0 = unlimited.
+            // High bounded defaults keep giant PRs from exploding cost.
+            const numOr = (v, d) => {
+              if (v === undefined || v === null || v === '') return d;
+              const n = Number(v);
+              return Number.isFinite(n) ? (n <= 0 ? 0 : Math.floor(n)) : d;
+            };
+            const MAX_FILES = numOr(process.env.MAX_DIFF_FILES, 1000);
+            const MAX_LINES_PER_FILE = numOr(process.env.MAX_DIFF_LINES_PER_FILE, 2000);
+            const MAX_TOTAL_CHARS = numOr(process.env.MAX_DIFF_CHARS, 500000);
+            const MODEL_CONTEXT_SAFETY_CHARS = 3000000;
+
+            const apiKey = (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '').trim();
+            if (!apiKey) {
+              core.setFailed('Missing GEMINI_API_KEY (or GOOGLE_API_KEY) secret. Add it at Settings → Secrets → Actions.');
+              return;
+            }
+
+            const base = process.env.BASE_SHA;
+            const head = process.env.HEAD_SHA;
+            const range = `${base}...${head}`;
+
+            function sh(args) {
+              try {
+                return execFileSync('git', args, { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
+              } catch (e) {
+                return '';
+              }
+            }
+
+            const stat = sh(['diff', '--stat', range]).trim();
+            const rawPatch = sh(['diff', '--no-color', range]);
+
+            if (!rawPatch.trim()) {
+              core.info(`No diff for range ${range}; skipping comment.`);
+              return;
+            }
+
+            // Lookahead split retains the `diff --git …` header on every chunk.
+            const chunks = rawPatch.split(/^(?=diff --git )/m).filter(Boolean);
+            const kept = [];
+            let total = 0, truncated = false;
+            for (let i = 0; i < chunks.length; i++) {
+              if (MAX_FILES > 0 && i >= MAX_FILES) { truncated = true; break; }
+              const lines = chunks[i].split('\n');
+              let block = MAX_LINES_PER_FILE > 0 ? lines.slice(0, MAX_LINES_PER_FILE).join('\n') : lines.join('\n');
+              if (MAX_LINES_PER_FILE > 0 && lines.length > MAX_LINES_PER_FILE) {
+                block += `\n... [truncated: ${lines.length - MAX_LINES_PER_FILE} more lines]\n`;
+                truncated = true;
+              }
+              if (MAX_TOTAL_CHARS > 0 && total + block.length > MAX_TOTAL_CHARS) {
+                block = block.slice(0, Math.max(0, MAX_TOTAL_CHARS - total)) + '\n... [truncated: total cap]';
+                kept.push(block); truncated = true; break;
+              }
+              kept.push(block); total += block.length;
+            }
+            if (MAX_FILES > 0 && chunks.length > MAX_FILES) kept.push(`... [truncated: ${chunks.length - MAX_FILES} more files]`);
+            // Chunks retain their own newlines (lookahead split), so join losslessly.
+            const patch = kept.join('');
+
+            const { GoogleGenAI } = await import('@google/genai');
+            const ai = new GoogleGenAI({ apiKey });
+            const prompt = `You are CommitStory, a principal software architect and technical writer.\nAnalyze this PR diff (${range}) and return JSON with "summary" (1-3 sentence technical summary), "mermaidCode" (VALID Mermaid flowchart starting with "graph TD", alphanumeric node IDs, under 25 nodes, no markdown fences), and "releaseNotes" (friendly non-technical markdown bullets, no jargon).\n\n--- STAT ---\n${stat}\n\n--- PATCH (truncated: ${truncated ? 'yes' : 'no'}) ---\n${patch}`;
+
+            if (prompt.length > MODEL_CONTEXT_SAFETY_CHARS) {
+              core.setFailed(`Diff too large to analyze (${prompt.length} chars exceeds the safety ceiling). Lower MAX_DIFF_* Variables or split the PR.`);
+              return;
+            }
+
+            let result;
+            let usedModel = MODEL;
+            try {
+              const schema = {
+                type: 'OBJECT',
+                properties: {
+                  summary: { type: 'STRING' },
+                  mermaidCode: { type: 'STRING' },
+                  releaseNotes: { type: 'STRING' },
+                },
+                required: ['summary', 'mermaidCode', 'releaseNotes'],
+                propertyOrdering: ['summary', 'mermaidCode', 'releaseNotes'],
+              };
+              const candidates = [...new Set([MODEL, FALLBACK_MODEL])];
+              let lastErr;
+              for (const candidate of candidates) {
+                try {
+                  const response = await withRetries(() => ai.models.generateContent({
+                    model: candidate,
+                    contents: prompt,
+                    config: { responseMimeType: 'application/json', responseSchema: schema },
+                  }));
+                  const text = (response?.text ?? '').trim()
+                    .replace(/^```json/gi, '').replace(/^```/g, '').replace(/```$/g, '').trim();
+                  result = JSON.parse(text);
+                  result.mermaidCode = String(result.mermaidCode || '').replace(/```mermaid/gi, '').replace(/```/g, '').trim();
+                  usedModel = candidate;
+                  break;
+                } catch (e) {
+                  lastErr = e;
+                  const notFound = isNotFound(e);
+                  const retryable = isRetryable(e);
+                  const isLast = candidate === candidates[candidates.length - 1];
+                  if ((!notFound && !retryable) || isLast) throw e;
+                  core.info(`Model "${candidate}" ${notFound ? 'unavailable' : 'still overloaded after retries'}, trying fallback.`);
+                }
+              }
+              if (!result) throw lastErr;
+            } catch (e) {
+              const hint = isRetryable(e) ? ' (Gemini overloaded — spikes are usually temporary; re-run the job in a minute.)' : '';
+              core.setFailed(`Gemini analysis failed: ${e.message}${hint}`);
+              return;
+            }
+
+            const body = `${MARKER}
+            ## 📖 CommitStory — Visual Changelog
+
+            **Range:** \`${range}\`${truncated ? ' · _(large diff truncated for analysis)_' : ''}
+
+            ### Summary
+            ${result.summary}
+
+            ### Architecture Map
+            \`\`\`mermaid
+            ${result.mermaidCode}
+            \`\`\`
+
+            ### Release Notes
+            ${result.releaseNotes}
+
+            ---
+            <sub>Generated by CommitStory · ${usedModel} · updates on every push</sub>`;
+
+            const { owner, repo } = context.repo;
+            const prNumber = context.payload.pull_request.number;
+            const { data: comments } = await github.rest.issues.listComments({ owner, repo, issue_number: prNumber, per_page: 100 });
+            const existing = comments.find((c) => c.body && c.body.includes(MARKER));
+
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+              core.info(`Updated CommitStory comment ${existing.id}.`);
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number: prNumber, body });
+              core.info('Created CommitStory comment.');
+            }

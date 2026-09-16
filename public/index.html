@@ -1,0 +1,577 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CommitStory — Git Diffs to Architecture Maps</title>
+  <meta name="description" content="Transform Git diffs and pull requests into Mermaid architecture maps and stakeholder release notes." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'system-ui', 'sans-serif'],
+            display: ['"Space Grotesk"', 'Inter', 'sans-serif'],
+            mono: ['"JetBrains Mono"', 'monospace'],
+          },
+        },
+      },
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <script>
+    mermaid.initialize({
+      startOnLoad: false,
+      theme: 'dark',
+      securityLevel: 'loose',
+      flowchart: { curve: 'basis', padding: 16, nodeSpacing: 48, rankSpacing: 64 },
+      themeVariables: {
+        primaryColor: '#1e1b4b',
+        primaryBorderColor: '#818cf8',
+        primaryTextColor: '#e0e7ff',
+        lineColor: '#6366f1',
+        secondaryColor: '#0f172a',
+        tertiaryColor: '#111c34',
+        mainBkg: '#1e1b4b',
+        nodeBorder: '#818cf8',
+      },
+    });
+  </script>
+  <style>
+    html { color-scheme: dark; }
+    body { background: #05070f; }
+    .bg-scene {
+      position: fixed; inset: 0; z-index: -1; overflow: hidden;
+      background:
+        radial-gradient(42rem 26rem at 12% -8%, rgba(99, 102, 241, 0.22), transparent 60%),
+        radial-gradient(36rem 24rem at 88% 4%, rgba(34, 211, 238, 0.13), transparent 60%),
+        radial-gradient(50rem 30rem at 50% 110%, rgba(139, 92, 246, 0.12), transparent 60%),
+        #05070f;
+    }
+    .bg-grid {
+      position: fixed; inset: 0; z-index: -1;
+      background-image: linear-gradient(rgba(148, 163, 184, 0.055) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(148, 163, 184, 0.055) 1px, transparent 1px);
+      background-size: 44px 44px;
+      mask-image: radial-gradient(ellipse 90% 60% at 50% 0%, black 30%, transparent 75%);
+    }
+    .glass {
+      background: rgba(13, 18, 36, 0.66);
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
+      border: 1px solid rgba(148, 163, 184, 0.14);
+      box-shadow: 0 24px 60px -24px rgba(0, 0, 0, 0.7), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    }
+    .gradient-text {
+      background: linear-gradient(100deg, #e0e7ff 10%, #a5b4fc 45%, #67e8f9 90%);
+      -webkit-background-clip: text; background-clip: text; color: transparent;
+    }
+    .btn-primary {
+      background: linear-gradient(135deg, #6366f1, #8b5cf6 55%, #06b6d4 130%);
+      box-shadow: 0 8px 24px -8px rgba(99, 102, 241, 0.7), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+      transition: transform 0.15s ease, box-shadow 0.2s ease, filter 0.2s ease;
+    }
+    .btn-primary:hover:not(:disabled) { filter: brightness(1.1); box-shadow: 0 10px 32px -8px rgba(99, 102, 241, 0.9); }
+    .btn-primary:active:not(:disabled) { transform: translateY(1px) scale(0.99); }
+    @keyframes fadeUp { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+    .fade-up { animation: fadeUp 0.5s cubic-bezier(0.22, 1, 0.36, 1) both; }
+    @keyframes shimmer { 0% { background-position: -400px 0; } 100% { background-position: 400px 0; } }
+    .skeleton {
+      background: linear-gradient(90deg, rgba(148,163,184,0.08) 25%, rgba(148,163,184,0.18) 50%, rgba(148,163,184,0.08) 75%);
+      background-size: 800px 100%;
+      animation: shimmer 1.4s infinite linear;
+    }
+    @keyframes pulseDot { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+    .step-active .step-dot { animation: pulseDot 1.2s infinite; }
+    .prose-notes h2 { font-family: 'Space Grotesk', sans-serif; font-size: 0.95rem; font-weight: 600; color: #e2e8f0; margin: 0.9rem 0 0.35rem; }
+    .prose-notes h3 { font-size: 0.85rem; font-weight: 600; color: #cbd5e1; margin: 0.8rem 0 0.3rem; }
+    .prose-notes p { margin: 0.4rem 0; line-height: 1.65; }
+    .prose-notes ul { margin: 0.4rem 0 0.4rem 0.25rem; display: grid; gap: 0.45rem; }
+    .prose-notes li { position: relative; padding-left: 1.35rem; line-height: 1.6; }
+    .prose-notes li::before { content: ''; position: absolute; left: 0.35rem; top: 0.62em; width: 5px; height: 5px; border-radius: 9999px; background: linear-gradient(135deg, #818cf8, #22d3ee); }
+    .prose-notes code { font-family: 'JetBrains Mono', monospace; font-size: 0.78em; background: rgba(99,102,241,0.14); border: 1px solid rgba(129,140,248,0.3); border-radius: 0.375rem; padding: 0.1rem 0.35rem; }
+    .prose-notes strong { color: #f1f5f9; font-weight: 600; }
+    #graph svg { max-width: none; }
+    .scroll-slim::-webkit-scrollbar { height: 8px; width: 8px; }
+    .scroll-slim::-webkit-scrollbar-thumb { background: rgba(129, 140, 248, 0.3); border-radius: 8px; }
+    .scroll-slim::-webkit-scrollbar-track { background: transparent; }
+    input:focus-visible, button:focus-visible, a:focus-visible, summary:focus-visible { outline: 2px solid #818cf8; outline-offset: 2px; }
+  </style>
+</head>
+<body class="text-slate-100 min-h-screen font-sans antialiased">
+  <div class="bg-scene"></div>
+  <div class="bg-grid"></div>
+
+  <div class="max-w-7xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
+    <!-- Header -->
+    <header class="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-5 mb-8 fade-up">
+      <div class="flex items-center gap-4">
+        <div class="shrink-0 w-12 h-12 rounded-2xl grid place-items-center" style="background: linear-gradient(135deg,#6366f1,#8b5cf6 55%,#06b6d4 130%); box-shadow: 0 12px 32px -10px rgba(99,102,241,.8);">
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="6" cy="6" r="2.5" /><circle cx="6" cy="18" r="2.5" /><circle cx="18" cy="12" r="2.5" />
+            <path d="M6 8.5v7M8 7c4 0 3 4 7.5 4.6" />
+          </svg>
+        </div>
+        <div>
+          <h1 class="font-display text-3xl sm:text-4xl font-bold tracking-tight">Commit<span class="gradient-text">Story</span></h1>
+          <p class="text-slate-400 mt-1 text-sm sm:text-[15px]">Git diffs &amp; PRs → architecture maps + stakeholder release notes</p>
+        </div>
+      </div>
+      <div id="healthBadges" class="flex flex-wrap items-center gap-2 text-xs" aria-live="polite">
+        <span class="inline-flex items-center gap-1.5 rounded-full border border-slate-700/60 bg-slate-900/70 px-3 py-1.5 text-slate-400">
+          <span id="healthDot" class="w-1.5 h-1.5 rounded-full bg-slate-500"></span>
+          <span id="healthText">Connecting…</span>
+        </span>
+        <span id="modelBadge" class="hidden rounded-full border border-indigo-500/30 bg-indigo-500/10 px-3 py-1.5 font-mono text-indigo-200"></span>
+        <a href="/api/health" target="_blank" rel="noopener" class="rounded-full border border-slate-700/60 bg-slate-900/70 px-3 py-1.5 text-slate-400 hover:text-slate-100 hover:border-slate-500 transition">API health ↗</a>
+      </div>
+    </header>
+
+    <!-- Input card -->
+    <section class="glass rounded-3xl p-5 sm:p-7 mb-6 fade-up" style="animation-delay:.08s">
+      <div class="flex items-center justify-between mb-3">
+        <label for="url" class="text-sm font-semibold tracking-wide text-slate-200">Analyze a change</label>
+        <span class="text-[11px] uppercase tracking-[0.14em] text-slate-500">GitHub repo or PR</span>
+      </div>
+      <div class="flex flex-col md:flex-row gap-3">
+        <div class="relative flex-1">
+          <svg class="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+          <input
+            id="url"
+            type="url"
+            autocomplete="off"
+            spellcheck="false"
+            placeholder="https://github.com/owner/repo/pull/123"
+            class="w-full rounded-2xl bg-slate-950/80 border border-slate-700/70 pl-11 pr-4 py-3.5 text-sm placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/70 focus:border-indigo-500/60 transition font-mono"
+          />
+        </div>
+        <button id="analyzeBtn" class="btn-primary rounded-2xl px-7 py-3.5 text-sm font-semibold text-white disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center justify-center gap-2 min-w-[132px]">
+          <span id="btnLabel">Analyze</span>
+          <svg id="btnSpin" class="hidden animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/></svg>
+        </button>
+      </div>
+      <div class="mt-4 flex flex-wrap items-center gap-2 text-xs">
+        <span class="text-slate-500 mr-1">Try</span>
+        <button class="example rounded-full border border-slate-700/70 bg-slate-900/60 px-3 py-1.5 text-indigo-200 hover:border-indigo-500/60 hover:bg-indigo-500/10 transition font-mono" data-url="https://github.com/facebook/react/pull/1">facebook/react#1</button>
+        <button class="example rounded-full border border-slate-700/70 bg-slate-900/60 px-3 py-1.5 text-indigo-200 hover:border-indigo-500/60 hover:bg-indigo-500/10 transition font-mono" data-url="https://github.com/expressjs/express">expressjs/express</button>
+        <span id="recentWrap" class="hidden items-center gap-2">
+          <span class="text-slate-600">·</span><span class="text-slate-500">Recent</span>
+          <span id="recent" class="inline-flex flex-wrap gap-2"></span>
+        </span>
+      </div>
+      <p class="mt-3 text-xs text-slate-500">Bare repo URLs analyze the latest commit on the default branch · PR URLs analyze the full PR diff</p>
+    </section>
+
+    <!-- Staged loader -->
+    <div id="loading" class="hidden mb-6" aria-live="polite">
+      <div class="glass rounded-3xl p-5 sm:p-6">
+        <ol class="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-6 text-sm">
+          <li id="step1" class="flex items-center gap-2.5 text-slate-300"><span class="step-dot w-2 h-2 rounded-full bg-indigo-400"></span>Fetching diff<span class="step-state text-slate-500 text-xs"></span></li>
+          <li id="step2" class="flex items-center gap-2.5 text-slate-500"><span class="step-dot w-2 h-2 rounded-full bg-slate-600"></span>Analyzing with Gemini<span class="step-state text-slate-500 text-xs"></span></li>
+          <li id="step3" class="flex items-center gap-2.5 text-slate-500"><span class="step-dot w-2 h-2 rounded-full bg-slate-600"></span>Rendering map<span class="step-state text-slate-500 text-xs"></span></li>
+          <li class="sm:ml-auto font-mono text-xs text-slate-500"><span id="elapsed">0.0s</span></li>
+        </ol>
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-5">
+          <div class="skeleton rounded-2xl h-[420px]"></div>
+          <div class="hidden lg:grid gap-3 content-start">
+            <div class="skeleton rounded-xl h-5 w-2/3"></div>
+            <div class="skeleton rounded-xl h-4 w-full"></div>
+            <div class="skeleton rounded-xl h-4 w-5/6"></div>
+            <div class="skeleton rounded-xl h-4 w-4/6"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Error -->
+    <div id="error" class="hidden mb-6 rounded-2xl border border-rose-500/30 bg-rose-950/50 px-5 py-4 text-sm text-rose-100" role="alert">
+      <div class="flex items-start justify-between gap-4">
+        <p id="errorText" class="leading-relaxed"></p>
+        <button id="retryBtn" class="shrink-0 rounded-xl border border-rose-400/40 px-4 py-2 text-xs font-semibold hover:bg-rose-500/15 transition">Retry</button>
+      </div>
+    </div>
+
+    <!-- Results -->
+    <section id="results" class="hidden">
+      <!-- Meta strip -->
+      <div class="glass rounded-2xl px-5 py-3.5 mb-5 flex flex-wrap items-center gap-2 text-xs fade-up">
+        <a id="metaRepo" href="#" target="_blank" rel="noopener" class="font-mono font-semibold text-indigo-200 hover:text-white transition"></a>
+        <span id="chipPr" class="hidden rounded-full bg-violet-500/15 border border-violet-400/30 text-violet-200 px-2.5 py-1 font-semibold"></span>
+        <span id="chipFiles" class="rounded-full bg-slate-500/15 border border-slate-400/25 text-slate-200 px-2.5 py-1 font-mono"></span>
+        <span id="chipAdd" class="rounded-full bg-emerald-500/12 border border-emerald-400/30 text-emerald-300 px-2.5 py-1 font-mono"></span>
+        <span id="chipDel" class="rounded-full bg-rose-500/12 border border-rose-400/30 text-rose-300 px-2.5 py-1 font-mono"></span>
+        <span class="flex-1"></span>
+        <span id="chipModel" class="rounded-full bg-cyan-500/10 border border-cyan-400/25 text-cyan-200 px-2.5 py-1 font-mono"></span>
+        <span id="chipTime" class="font-mono text-slate-400"></span>
+        <span id="chipTrunc" class="hidden rounded-full bg-amber-500/12 border border-amber-400/30 text-amber-200 px-2.5 py-1">truncated for analysis</span>
+      </div>
+
+      <div class="grid grid-cols-1 lg:grid-cols-5 gap-5">
+        <!-- Map -->
+        <div class="lg:col-span-3 glass rounded-3xl p-5 sm:p-6 fade-up" style="animation-delay:.05s">
+          <div class="flex items-center justify-between gap-3 mb-4">
+            <h2 class="font-display text-lg font-semibold tracking-tight">Architecture Map</h2>
+            <div class="flex items-center gap-1.5">
+              <button id="zoomOut" title="Zoom out" class="w-8 h-8 grid place-items-center rounded-lg border border-slate-700/70 text-slate-300 hover:bg-slate-800 transition text-base leading-none">−</button>
+              <button id="zoomReset" title="Reset zoom" class="h-8 px-2.5 grid place-items-center rounded-lg border border-slate-700/70 text-slate-300 hover:bg-slate-800 transition text-[11px] font-mono">100%</button>
+              <button id="zoomIn" title="Zoom in" class="w-8 h-8 grid place-items-center rounded-lg border border-slate-700/70 text-slate-300 hover:bg-slate-800 transition text-base leading-none">+</button>
+              <span class="w-px h-5 bg-slate-700/60 mx-1"></span>
+              <button id="copyBtn" class="h-8 px-3 rounded-lg border border-slate-700/70 text-xs font-medium text-slate-200 hover:bg-slate-800 transition">Copy Mermaid</button>
+              <button id="svgBtn" class="h-8 px-3 rounded-lg btn-primary text-xs font-semibold text-white">SVG ↓</button>
+              <button id="expandBtn" title="Fullscreen view" class="h-8 px-3 rounded-lg border border-slate-700/70 text-xs font-medium text-slate-200 hover:bg-slate-800 transition inline-flex items-center gap-1.5">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"/></svg>
+                Expand
+              </button>
+            </div>
+          </div>
+          <div id="graphScroll" class="scroll-slim rounded-2xl bg-slate-950/70 border border-slate-800/80 p-4 overflow-auto min-h-[420px] max-h-[78vh]">
+            <div id="graph" class="origin-top-left transition-transform duration-150"></div>
+          </div>
+          <details class="mt-4 group">
+            <summary class="text-xs text-slate-400 cursor-pointer hover:text-slate-100 transition list-none inline-flex items-center gap-1.5">
+              <svg class="group-open:rotate-90 transition-transform" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>
+              Mermaid source
+            </summary>
+            <pre id="mermaidCode" class="mt-2 text-xs font-mono whitespace-pre-wrap rounded-2xl bg-slate-950/70 border border-slate-800/80 p-4 overflow-auto max-h-64 scroll-slim text-slate-300"></pre>
+          </details>
+        </div>
+
+        <!-- Notes -->
+        <div class="lg:col-span-2 glass rounded-3xl p-5 sm:p-6 fade-up" style="animation-delay:.12s">
+          <div class="flex items-center justify-between mb-3">
+            <h2 class="font-display text-lg font-semibold tracking-tight">Release Notes</h2>
+            <button id="copyNotesBtn" class="text-xs rounded-lg border border-slate-700/70 px-3 py-1.5 text-slate-300 hover:bg-slate-800 transition">Copy</button>
+          </div>
+          <p id="context" class="text-xs font-mono text-slate-500 mb-4 leading-relaxed"></p>
+          <div class="rounded-2xl border border-indigo-500/25 bg-gradient-to-br from-indigo-500/12 to-cyan-500/8 p-4 mb-4">
+            <h3 class="text-[11px] font-semibold uppercase tracking-[0.14em] text-indigo-300 mb-1.5">Summary</h3>
+            <p id="summary" class="text-sm text-slate-100 leading-relaxed"></p>
+          </div>
+          <h3 class="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400 mb-2">For stakeholders</h3>
+          <div id="notes" class="prose-notes text-sm text-slate-200"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Empty state -->
+    <div id="empty" class="glass rounded-3xl p-10 sm:p-14 text-center fade-up" style="animation-delay:.1s">
+      <div class="mx-auto w-14 h-14 rounded-2xl grid place-items-center border border-slate-700/60 bg-slate-900/60 mb-5">
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#818cf8" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="12" r="2.5"/><path d="M6 8.5v7M8 7c4 0 3 4 7.5 4.6"/></svg>
+      </div>
+      <h2 class="font-display text-xl font-semibold tracking-tight mb-2">Every diff tells a story</h2>
+      <p class="text-sm text-slate-400 max-w-md mx-auto leading-relaxed">Paste a pull request to see the system it touches — rendered as a living architecture map with release notes anyone can read.</p>
+    </div>
+
+    <footer class="mt-10 text-center text-xs text-slate-600">
+      CommitStory · CLI <code class="font-mono text-slate-500">commitstory --compare main..feature</code> · Mermaid rendered client-side
+    </footer>
+  </div>
+
+  <!-- Fullscreen map overlay -->
+  <div id="mapOverlay" class="hidden fixed inset-0 z-50 p-4 sm:p-8" role="dialog" aria-modal="true" aria-label="Architecture map fullscreen">
+    <div id="mapBackdrop" class="absolute inset-0 bg-slate-950/85" style="backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);"></div>
+    <div class="relative glass rounded-3xl h-full flex flex-col p-4 sm:p-6 fade-up">
+      <div class="flex items-center justify-between gap-3 mb-3">
+        <h2 class="font-display text-base font-semibold tracking-tight">Architecture Map <span class="text-slate-500 font-sans font-normal text-xs">· fullscreen</span></h2>
+        <div class="flex items-center gap-1.5">
+          <button id="ovZoomOut" class="w-8 h-8 grid place-items-center rounded-lg border border-slate-700/70 text-slate-300 hover:bg-slate-800 transition text-base leading-none">−</button>
+          <button id="ovZoomReset" class="h-8 px-2.5 grid place-items-center rounded-lg border border-slate-700/70 text-slate-300 hover:bg-slate-800 transition text-[11px] font-mono">100%</button>
+          <button id="ovZoomIn" class="w-8 h-8 grid place-items-center rounded-lg border border-slate-700/70 text-slate-300 hover:bg-slate-800 transition text-base leading-none">+</button>
+          <span class="w-px h-5 bg-slate-700/60 mx-1"></span>
+          <button id="overlayClose" class="h-8 px-4 rounded-lg btn-primary text-xs font-semibold text-white">Close ✕</button>
+        </div>
+      </div>
+      <div id="overlaySlot" class="flex-1 min-h-0 rounded-2xl bg-slate-950/70 border border-slate-800/80 overflow-hidden flex flex-col"></div>
+      <p class="mt-2 text-[11px] text-slate-500">Press <kbd class="font-mono border border-slate-700 rounded px-1">Esc</kbd> or click outside to close · zoom carries over</p>
+    </div>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const urlInput = $('url'), btn = $('analyzeBtn'), btnLabel = $('btnLabel'), btnSpin = $('btnSpin');
+    const loading = $('loading'), errorBox = $('error'), errorText = $('errorText');
+    const results = $('results'), empty = $('empty');
+    const graph = $('graph'), graphScroll = $('graphScroll'), codeEl = $('mermaidCode');
+    const summaryEl = $('summary'), notesEl = $('notes'), contextEl = $('context');
+    let lastMermaid = '', lastNotes = '', zoom = 1, timer = null, t0 = 0;
+
+    /* ---------- health badges ---------- */
+    (async () => {
+      try {
+        const r = await fetch('/api/health');
+        const h = await r.json();
+        if (!h.ok) throw new Error('down');
+        $('healthDot').className = 'w-1.5 h-1.5 rounded-full ' + (h.hasGeminiKey ? 'bg-emerald-400' : 'bg-amber-400');
+        $('healthText').textContent = h.hasGeminiKey ? 'API ready' : 'API up · no key';
+        const mb = $('modelBadge');
+        mb.textContent = h.model || 'gemini';
+        mb.classList.remove('hidden');
+      } catch {
+        $('healthDot').className = 'w-1.5 h-1.5 rounded-full bg-rose-400';
+        $('healthText').textContent = 'API unreachable';
+      }
+    })();
+
+    /* ---------- recent urls ---------- */
+    function getRecent() {
+      try { return JSON.parse(localStorage.getItem('commitstory:recent') || '[]'); } catch { return []; }
+    }
+    function pushRecent(url) {
+      try {
+        const list = [url, ...getRecent().filter((u) => u !== url)].slice(0, 4);
+        localStorage.setItem('commitstory:recent', JSON.stringify(list));
+        renderRecent();
+      } catch {}
+    }
+    function renderRecent() {
+      const list = getRecent();
+      $('recentWrap').classList.toggle('hidden', !list.length);
+      $('recentWrap').classList.toggle('inline-flex', !!list.length);
+      $('recent').innerHTML = '';
+      list.forEach((u) => {
+        const b = document.createElement('button');
+        let short = u.replace(/^https?:\/\/github\.com\//, '');
+        if (short.length > 34) short = short.slice(0, 33) + '…';
+        b.textContent = short;
+        b.title = u;
+        b.className = 'rounded-full border border-slate-700/70 bg-slate-900/60 px-3 py-1.5 font-mono text-slate-300 hover:border-indigo-500/60 hover:text-indigo-100 transition max-w-[220px] truncate';
+        b.addEventListener('click', () => { urlInput.value = u; });
+        $('recent').appendChild(b);
+      });
+    }
+    renderRecent();
+    document.querySelectorAll('.example').forEach((b) => {
+      b.addEventListener('click', () => { urlInput.value = b.dataset.url; urlInput.focus(); });
+    });
+
+    /* ---------- safe markdown (subset) ---------- */
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
+    function inlineMd(s) {
+      return s
+        .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+        .replace(/`([^`]+)`/g, '<code>$1</code>');
+    }
+    function renderMarkdown(src) {
+      const lines = String(src || '').split('\n');
+      let html = '', inList = false;
+      const closeList = () => { if (inList) { html += '</ul>'; inList = false; } };
+      for (const raw of lines) {
+        const line = raw.trim();
+        const h = line.match(/^(#{2,4})\s+(.*)$/);
+        const bullet = line.match(/^([-*]|\d+[.)])\s+(.*)$/);
+        if (h) {
+          closeList();
+          const lvl = h[1].length === 2 ? 'h2' : 'h3';
+          html += `<${lvl}>${inlineMd(escapeHtml(h[2]))}</${lvl}>`;
+        } else if (bullet) {
+          if (!inList) { html += '<ul>'; inList = true; }
+          html += `<li>${inlineMd(escapeHtml(bullet[2]))}</li>`;
+        } else if (line === '') {
+          closeList();
+        } else {
+          closeList();
+          html += `<p>${inlineMd(escapeHtml(line))}</p>`;
+        }
+      }
+      closeList();
+      return html || '<p class="text-slate-500">No notes.</p>';
+    }
+
+    /* ---------- loader stages ---------- */
+    function setStep(id, state) {
+      const el = $(id);
+      const dot = el.querySelector('.step-dot');
+      const label = el.querySelector('.step-state');
+      el.classList.toggle('step-active', state === 'active');
+      if (state === 'active') {
+        el.classList.remove('text-slate-500'); el.classList.add('text-slate-100');
+        dot.className = 'step-dot w-2 h-2 rounded-full bg-indigo-400';
+        label.textContent = '…';
+      } else if (state === 'done') {
+        el.classList.remove('text-slate-500'); el.classList.add('text-slate-300');
+        dot.className = 'step-dot w-2 h-2 rounded-full bg-emerald-400';
+        label.textContent = '✓';
+      } else {
+        el.classList.add('text-slate-500'); el.classList.remove('text-slate-100');
+        dot.className = 'step-dot w-2 h-2 rounded-full bg-slate-600';
+        label.textContent = '';
+      }
+    }
+    function startLoading() {
+      loading.classList.remove('hidden');
+      setStep('step1', 'active'); setStep('step2', 'idle'); setStep('step3', 'idle');
+      t0 = performance.now();
+      $('elapsed').textContent = '0.0s';
+      clearInterval(timer);
+      timer = setInterval(() => { $('elapsed').textContent = ((performance.now() - t0) / 1000).toFixed(1) + 's'; }, 100);
+    }
+    function stopLoading() {
+      clearInterval(timer);
+      loading.classList.add('hidden');
+    }
+
+    function showError(msg) {
+      errorText.textContent = msg;
+      errorBox.classList.remove('hidden');
+      errorBox.classList.add('fade-up');
+    }
+
+    /* ---------- toolbar ---------- */
+    function applyZoom() {
+      graph.style.transform = `scale(${zoom})`;
+      const label = Math.round(zoom * 100) + '%';
+      $('zoomReset').textContent = label;
+      $('ovZoomReset').textContent = label;
+    }
+    $('zoomIn').addEventListener('click', () => { zoom = Math.min(2.5, +(zoom + 0.15).toFixed(2)); applyZoom(); });
+    $('zoomOut').addEventListener('click', () => { zoom = Math.max(0.4, +(zoom - 0.15).toFixed(2)); applyZoom(); });
+    $('zoomReset').addEventListener('click', () => { zoom = 1; applyZoom(); });
+    $('ovZoomIn').addEventListener('click', () => { zoom = Math.min(2.5, +(zoom + 0.15).toFixed(2)); applyZoom(); });
+    $('ovZoomOut').addEventListener('click', () => { zoom = Math.max(0.4, +(zoom - 0.15).toFixed(2)); applyZoom(); });
+    $('ovZoomReset').addEventListener('click', () => { zoom = 1; applyZoom(); });
+
+    /* ---------- fullscreen overlay (moves the live node, zoom preserved) ---------- */
+    const overlay = $('mapOverlay'), overlaySlot = $('overlaySlot');
+    const graphHome = graphScroll.parentElement;
+    const graphHomeNext = graphScroll.nextSibling;
+    let lastFocus = null;
+    function openOverlay() {
+      if (!lastMermaid || !overlay.classList.contains('hidden')) return;
+      lastFocus = document.activeElement;
+      overlaySlot.appendChild(graphScroll);
+      graphScroll.classList.add('flex-1');
+      graphScroll.style.height = '100%';
+      graphScroll.style.maxHeight = 'none';
+      graphScroll.style.minHeight = '0';
+      graphScroll.style.border = 'none';
+      overlay.classList.remove('hidden');
+      document.body.style.overflow = 'hidden';
+      $('overlayClose').focus();
+    }
+    function closeOverlay() {
+      if (overlay.classList.contains('hidden')) return;
+      overlay.classList.add('hidden');
+      graphHome.insertBefore(graphScroll, graphHomeNext);
+      graphScroll.classList.remove('flex-1');
+      graphScroll.style.height = '';
+      graphScroll.style.maxHeight = '';
+      graphScroll.style.minHeight = '';
+      graphScroll.style.border = '';
+      document.body.style.overflow = '';
+      if (lastFocus && lastFocus.focus) lastFocus.focus();
+    }
+    $('expandBtn').addEventListener('click', openOverlay);
+    $('overlayClose').addEventListener('click', closeOverlay);
+    $('mapBackdrop').addEventListener('click', closeOverlay);
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') closeOverlay();
+    });
+
+    async function copyText(text, btnEl, doneLabel) {
+      const orig = btnEl.textContent;
+      try {
+        await navigator.clipboard.writeText(text);
+        btnEl.textContent = doneLabel || 'Copied ✓';
+      } catch {
+        btnEl.textContent = 'Copy failed';
+      }
+      setTimeout(() => { btnEl.textContent = orig; }, 1600);
+    }
+    $('copyBtn').addEventListener('click', (e) => copyText(lastMermaid, e.currentTarget));
+    $('copyNotesBtn').addEventListener('click', (e) => copyText(lastNotes, e.currentTarget));
+    $('svgBtn').addEventListener('click', () => {
+      const svg = graph.querySelector('svg');
+      if (!svg) return;
+      const clone = svg.cloneNode(true);
+      clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+      const blob = new Blob([new XMLSerializer().serializeToString(clone)], { type: 'image/svg+xml' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'commitstory-architecture.svg';
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    });
+
+    /* ---------- analyze ---------- */
+    function fmtNum(n) {
+      return Number(n || 0).toLocaleString('en-US');
+    }
+    async function analyze() {
+      const url = urlInput.value.trim();
+      errorBox.classList.add('hidden');
+      results.classList.add('hidden');
+      if (!url) { showError('Please paste a GitHub repository or PR URL to begin.'); return; }
+      btn.disabled = true;
+      btnLabel.textContent = 'Working';
+      btnSpin.classList.remove('hidden');
+      empty.classList.add('hidden');
+      startLoading();
+      try {
+        const res = await fetch('/api/analyze', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || ('Request failed (' + res.status + ')'));
+        setStep('step1', 'done'); setStep('step2', 'done'); setStep('step3', 'active');
+
+        pushRecent(url);
+        lastMermaid = (data.mermaidCode || '').trim();
+        lastNotes = data.releaseNotes || '';
+        codeEl.textContent = lastMermaid;
+        summaryEl.textContent = data.summary || '';
+        notesEl.innerHTML = renderMarkdown(lastNotes);
+        contextEl.textContent = data.context || '';
+
+        const repoLabel = data.owner + '/' + data.repo;
+        const repoLink = $('metaRepo');
+        repoLink.textContent = repoLabel;
+        repoLink.href = data.prNumber
+          ? `https://github.com/${repoLabel}/pull/${data.prNumber}`
+          : `https://github.com/${repoLabel}`;
+        const prChip = $('chipPr');
+        if (data.prNumber) { prChip.textContent = 'PR #' + data.prNumber; prChip.classList.remove('hidden'); }
+        else prChip.classList.add('hidden');
+        $('chipFiles').textContent = fmtNum(data.filesChanged) + ' files';
+        $('chipAdd').textContent = '+' + fmtNum(data.additions);
+        $('chipDel').textContent = '−' + fmtNum(data.deletions);
+        $('chipModel').textContent = data.model || 'gemini';
+        $('chipTime').textContent = ((performance.now() - t0) / 1000).toFixed(1) + 's';
+        $('chipTrunc').classList.toggle('hidden', !data.truncated);
+
+        graph.innerHTML = '';
+        zoom = 1; applyZoom();
+        try {
+          const { svg } = await mermaid.render('m' + Date.now(), lastMermaid);
+          graph.innerHTML = svg;
+        } catch (e) {
+          graph.innerHTML = '<p class="text-sm text-rose-300 p-2">Mermaid could not render this graph — the source is shown below.</p>';
+        }
+        setStep('step3', 'done');
+        results.classList.remove('hidden');
+        results.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      } catch (e) {
+        empty.classList.remove('hidden');
+        showError(e.message);
+      } finally {
+        btn.disabled = false;
+        btnLabel.textContent = 'Analyze';
+        btnSpin.classList.add('hidden');
+        stopLoading();
+      }
+    }
+
+    btn.addEventListener('click', analyze);
+    $('retryBtn').addEventListener('click', analyze);
+    urlInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') analyze(); });
+  </script>
+</body>
+</html>
