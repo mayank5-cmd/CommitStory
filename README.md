@@ -1,4 +1,5 @@
-# CommitStory — Codebase Description (for everyone, no tech background needed)
+# CommitStory — Codebase Description (for everyone, 
+no tech background needed)
 
 ## 1. The one-paragraph version
 
